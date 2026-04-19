@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paperclip POC — Agentic Orchestration for monday.com</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0b0b18; --surface: #13131f; --surface2: #1c1c2e;
+    --accent: #6c6cff; --accent2: #a78bfa; --red: #ff3d57;
+    --green: #22c55e; --yellow: #f59e0b; --text: #e8e8f0;
+    --muted: #8888aa; --border: rgba(108,108,255,0.18);
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; overflow: hidden; }
+  #progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.4s ease; z-index: 100; }
+  #deck { width: 100vw; height: 100vh; position: relative; overflow: hidden; }
+  .slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 60px 80px; opacity: 0; transform: translateX(60px); transition: opacity 0.45s ease, transform 0.45s ease; pointer-events: none; }
+  .slide.active { opacity: 1; transform: translateX(0); pointer-events: all; }
+  .slide.exit-left { opacity: 0; transform: translateX(-60px); }
+  .slide-cover { background: radial-gradient(ellipse at 30% 50%, rgba(108,108,255,0.12) 0%, transparent 60%), var(--bg); }
+  .cover-badge { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 20px; padding: 5px 16px; margin-bottom: 28px; }
+  .cover-title { font-size: 54px; font-weight: 900; line-height: 1.05; text-align: center; background: linear-gradient(135deg, #fff 0%, var(--accent2) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 20px; }
+  .cover-sub { font-size: 18px; color: var(--muted); margin-bottom: 48px; text-align: center; }
+  .cover-meta { display: flex; gap: 40px; }
+  .cover-meta-item { text-align: center; }
+  .cover-meta-item .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 4px; }
+  .cover-meta-item .value { font-size: 15px; font-weight: 600; color: var(--text); }
+  .slide-content { align-items: flex-start; background: var(--bg); }
+  .slide-tag { font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  .slide-title { font-size: 38px; font-weight: 800; line-height: 1.15; margin-bottom: 32px; color: #fff; }
+  .slide-title .accent { color: var(--accent); }
+  .slide-title .danger { color: var(--red); }
+  .slide-title .ok { color: var(--green); }
+  .bullets { list-style: none; display: flex; flex-direction: column; gap: 14px; width: 100%; }
+  .bullets li { display: flex; align-items: flex-start; gap: 14px; font-size: 17px; line-height: 1.5; color: var(--text); }
+  .bullets li .icon { flex-shrink: 0; width: 24px; text-align: center; }
+  .bullets li .sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; width: 100%; margin-bottom: 28px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 16px; text-align: center; }
+  .stat-card .num { font-size: 30px; font-weight: 800; color: var(--accent); font-family: 'JetBrains Mono', 'Courier New', monospace; }
+  .stat-card .unit { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .stat-card .label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .highlight-box { width: 100%; border-radius: 12px; padding: 22px 26px; border-left: 4px solid; margin-bottom: 16px; }
+  .highlight-box.red { background: rgba(255,61,87,0.08); border-color: var(--red); }
+  .highlight-box.green { background: rgba(34,197,94,0.08); border-color: var(--green); }
+  .highlight-box.yellow { background: rgba(245,158,11,0.08); border-color: var(--yellow); }
+  .highlight-box.purple { background: rgba(108,108,255,0.08); border-color: var(--accent); }
+  .highlight-box .hb-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
+  .highlight-box.red .hb-title { color: var(--red); }
+  .highlight-box.green .hb-title { color: var(--green); }
+  .highlight-box.yellow .hb-title { color: var(--yellow); }
+  .highlight-box.purple .hb-title { color: var(--accent); }
+  .highlight-box p { font-size: 15px; line-height: 1.6; color: var(--text); }
+  .cmp-table { width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 10px; overflow: hidden; }
+  .cmp-table th { background: var(--surface2); padding: 12px 18px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); border-bottom: 1px solid var(--border); text-align: left; }
+  .cmp-table td { background: var(--surface); padding: 13px 18px; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .cmp-table tr:last-child td { border-bottom: none; }
+  .yes { color: var(--green); font-weight: 600; }
+  .no { color: var(--red); font-weight: 600; }
+  .warn { color: var(--yellow); font-weight: 600; }
+  .reco-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; width: 100%; }
+  .reco-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .reco-num { font-size: 36px; font-weight: 900; color: var(--accent); line-height: 1; }
+  .reco-name { font-size: 16px; font-weight: 700; color: #fff; }
+  .reco-why { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .next-list { list-style: none; display: flex; flex-direction: column; gap: 14px; width: 100%; }
+  .next-list li { display: flex; align-items: center; gap: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; font-size: 15px; }
+  .step-num { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #fff; flex-shrink: 0; }
+  .blocker-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .blocker-list li { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-size: 14px; }
+  .blocker-list li .fix { font-size: 12px; color: var(--green); font-weight: 600; }
+  .arch-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 100%; }
+  .arch-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 15px; }
+  .arch-arrow { color: var(--accent); font-size: 18px; }
+  code { font-family: 'JetBrains Mono','Fira Code','Courier New',monospace; background: var(--surface2); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+  #nav { position: fixed; bottom: 28px; right: 36px; display: flex; align-items: center; gap: 12px; z-index: 100; }
+  #slide-counter { font-size: 13px; color: var(--muted); font-family: 'Courier New', monospace; }
+  .nav-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+  .nav-btn:hover { background: var(--surface2); border-color: var(--accent); }
+  .nav-btn:disabled { opacity: 0.3; cursor: default; }
+</style>
+</head>
+<body>
+<div id="progress-bar"></div>
+<div id="deck">
+
+<!-- Slide 1: Cover -->
+<div class="slide slide-cover active" data-index="0">
+  <div class="cover-badge">Tech Radar POC · 2026-04-19 · Live Run</div>
+  <div class="cover-title">Paperclip Agentic Orchestration POC</div>
+  <div class="cover-sub">Org charts, heartbeats, and budget controls for monday.com AI agents</div>
+  <div class="cover-meta">
+    <div class="cover-meta-item"><div class="label">Author</div><div class="value">Radar</div></div>
+    <div class="cover-meta-item"><div class="label">For</div><div class="value">Keren Koshman</div></div>
+    <div class="cover-meta-item"><div class="label">Signal</div><div class="value">🟢 Ship it</div></div>
+    <div class="cover-meta-item"><div class="label">Verdict</div><div class="value">Integrate</div></div>
+    <div class="cover-meta-item"><div class="label">Stars</div><div class="value">55,600+</div></div>
+  </div>
+</div>
+
+<!-- Slide 2: What is Paperclip -->
+<div class="slide slide-content" data-index="1">
+  <div class="slide-tag">Background</div>
+  <div class="slide-title">What is <span class="accent">Paperclip</span>?</div>
+  <ul class="bullets">
+    <li><span class="icon">🏢</span><div><strong>Org chart for AI agents</strong> — not an agent framework. It manages the company that runs on top of agents.<div class="sub">github.com/paperclipai/paperclip · 55,600★ MIT · launched Mar 4, 2026</div></div></li>
+    <li><span class="icon">🤖</span><div><strong>Bring your own agents</strong> — OpenClaw, Claude, Codex, Cursor, any HTTP endpoint. "If it can receive a heartbeat, it's hired."<div class="sub">Agents have roles (CEO, CTO, engineer, researcher), report lines, and monthly budgets</div></div></li>
+    <li><span class="icon">💰</span><div><strong>Hard budget controls</strong> — monthly per-agent token budget. When it hits the limit, the agent stops. No runaway spend.<div class="sub">Atomic task checkout prevents double-work across concurrent agents</div></div></li>
+    <li><span class="icon">📋</span><div><strong>Tickets + goal ancestry</strong> — every task traces back to the company mission. Agents always know the "why."<div class="sub">Immutable audit log, heartbeat scheduling, full tool-call tracing</div></div></li>
+  </ul>
+</div>
+
+<!-- Slide 3: Why This Matters for monday.com -->
+<div class="slide slide-content" data-index="2">
+  <div class="slide-tag">Use Case</div>
+  <div class="slide-title">The <span class="accent">monday.com</span> Fit</div>
+  <div class="highlight-box purple" style="margin-bottom:24px">
+    <div class="hb-title">Hypothesis</div>
+    <p>"When you have 10+ AI agents running in parallel — coding, researching, reviewing — Paperclip is the management layer that keeps them coordinated, budgeted, and auditable."</p>
+  </div>
+  <ul class="bullets">
+    <li><span class="icon">✅</span><div><strong>20 Claude Code tabs open?</strong> Paperclip turns that into a ticket queue with assignments, status, and context threading.</div></li>
+    <li><span class="icon">✅</span><div><strong>OpenClaw as a Paperclip employee</strong> — explicitly supported. OpenClaw is listed as a first-class adapter. "OpenClaw is an employee; Paperclip is the company."</div></li>
+    <li><span class="icon">✅</span><div><strong>Directly relevant for AI Innovation team</strong> — org-wide agent config, reproducible setups, agent governance.</div></li>
+    <li><span class="icon">✅</span><div><strong>On-prem / self-hosted</strong> — single Node.js process, no Paperclip account required, full data isolation.</div></li>
+  </ul>
+</div>
+
+<!-- Slide 4: What We Tested -->
+<div class="slide slide-content" data-index="3">
+  <div class="slide-tag">Methodology</div>
+  <div class="slide-title">What We Actually Ran</div>
+  <ul class="bullets">
+    <li><span class="icon" style="color:var(--accent)">①</span><div><strong>Install + onboard</strong> — <code>npx paperclipai onboard --yes</code>. Resolved Docker Postgres workaround (root user incompatibility with embedded PG).</div></li>
+    <li><span class="icon" style="color:var(--accent)">②</span><div><strong>REST API exploration</strong> — created company, project, 3-agent org chart (CEO → Radar + CodeAgent), and 2 issues (MON-1, MON-2) via the API.</div></li>
+    <li><span class="icon" style="color:var(--accent)">③</span><div><strong>Heartbeat authentication</strong> — JWT generation, WS gateway connect, device pairing, scope grants. Diagnosed and fixed 3 separate auth blockers.</div></li>
+    <li><span class="icon" style="color:var(--accent)">④</span><div><strong>End-to-end heartbeat loop</strong> — Paperclip → process adapter → <code>openclaw agent</code> CLI → this session → <code>HEARTBEAT_OK</code> → Paperclip <code>succeeded</code>.</div></li>
+  </ul>
+</div>
+
+<!-- Slide 5: The Architecture -->
+<div class="slide slide-content" data-index="4">
+  <div class="slide-tag">Architecture — Live POC</div>
+  <div class="slide-title">How the Loop <span class="accent">Actually Works</span></div>
+  <div class="arch-box">
+    <div class="arch-row"><strong style="color:var(--accent)">Paperclip</strong> <span class="arch-arrow">→</span> Fires scheduled heartbeat on <em>Radar</em> agent (cron or on_demand)</div>
+    <div class="arch-row" style="padding-left:24px"><span class="arch-arrow">→</span> Process adapter runs <code>openclaw-heartbeat.sh</code> with env: <code>PAPERCLIP_AGENT_ID</code>, <code>PAPERCLIP_API_URL</code></div>
+    <div class="arch-row" style="padding-left:48px"><span class="arch-arrow">→</span> Script calls <code>openclaw agent --session-id main --message "[Paperclip Heartbeat] ..."</code></div>
+    <div class="arch-row" style="padding-left:72px"><span class="arch-arrow">→</span> <strong style="color:var(--accent2)">OpenClaw</strong> wakes the main session, processes the wake event</div>
+    <div class="arch-row" style="padding-left:96px"><span class="arch-arrow">→</span> Agent replies: <code>HEARTBEAT_OK</code></div>
+    <div class="arch-row" style="padding-left:72px"><span class="arch-arrow">→</span> Script exits 0 → Paperclip marks run <span class="yes">succeeded</span></div>
+  </div>
+  <div class="highlight-box green" style="margin-top:20px">
+    <div class="hb-title">Live confirmed</div>
+    <p>Run ID <code>0c0569b2</code> — Status: <strong>succeeded</strong> · ExitCode: 0 · stdout: "HEARTBEAT_OK"</p>
+  </div>
+</div>
+
+<!-- Slide 6: Blockers Hit -->
+<div class="slide slide-content" data-index="5">
+  <div class="slide-tag">Results — Engineering Notes</div>
+  <div class="slide-title">Blockers Hit <span class="ok">→ All Resolved</span></div>
+  <ul class="blocker-list">
+    <li><span>Embedded Postgres rejects root user</span><span class="fix">→ Docker postgres:16-alpine workaround</span></li>
+    <li><span><code>missing scope: operator.write</code> on heartbeat WS</span><span class="fix">→ Root-caused: <code>disableDeviceAuth:true</code> strips all scopes. Fixed with stable Ed25519 keypair + device approval</span></li>
+    <li><span><code>invalid agent params: unexpected property 'paperclip'</code></span><span class="fix">→ Schema mismatch: paperclipai 2026.416.0 sends fields OpenClaw 2026.3.28 rejects. Updated OpenClaw to 2026.4.15</span></li>
+    <li><span>openclaw_gateway adapter still fails after update</span><span class="fix">→ Switched to process adapter + CLI bridge. Cleaner, no WS schema dependency</span></li>
+    <li><span>OpenClaw <code>agent</code> command needs session target</span><span class="fix">→ <code>--session-id main</code> routes to the main active session</span></li>
+  </ul>
+  <div class="highlight-box yellow" style="margin-top:20px">
+    <div class="hb-title">Known gap</div>
+    <p>The <code>openclaw_gateway</code> adapter needs openclaw to accept a <code>paperclip</code> field in <code>agent</code> params. Filed as a watch item — likely a minor schema update in a future OpenClaw release.</p>
+  </div>
+</div>
+
+<!-- Slide 7: Comparison -->
+<div class="slide slide-content" data-index="6">
+  <div class="slide-tag">Evaluation</div>
+  <div class="slide-title">Paperclip vs. Current Alternatives</div>
+  <table class="cmp-table">
+    <thead>
+      <tr><th>Capability</th><th>Paperclip</th><th>Asana/Linear + OpenClaw</th><th>Raw scripts</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Agent org chart + hierarchy</td><td class="yes">✅ Native</td><td class="no">❌ Manual</td><td class="no">❌</td></tr>
+      <tr><td>Per-agent monthly budget</td><td class="yes">✅ Hard stop</td><td class="no">❌</td><td class="no">❌</td></tr>
+      <tr><td>Heartbeat scheduling</td><td class="yes">✅ Built-in</td><td class="warn">⚠️ Custom crons</td><td class="warn">⚠️ DIY</td></tr>
+      <tr><td>Goal ancestry on tasks</td><td class="yes">✅ Native</td><td class="warn">⚠️ Manual</td><td class="no">❌</td></tr>
+      <tr><td>Immutable audit log</td><td class="yes">✅ Per run</td><td class="warn">⚠️ Partial</td><td class="no">❌</td></tr>
+      <tr><td>OpenClaw integration</td><td class="yes">✅ First-class</td><td class="warn">⚠️ Webhooks</td><td class="warn">⚠️ Manual</td></tr>
+      <tr><td>Self-hosted, no account needed</td><td class="yes">✅</td><td class="no">❌ SaaS</td><td class="yes">✅</td></tr>
+      <tr><td>Setup effort</td><td class="warn">⚠️ Medium (Docker + onboard)</td><td class="warn">⚠️ Medium</td><td class="yes">✅ Low</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Slide 8: Verdict -->
+<div class="slide slide-content" data-index="7" style="align-items:center;text-align:center">
+  <div class="slide-tag" style="text-align:center">Verdict</div>
+  <div style="font-size:72px;margin-bottom:16px">🟢</div>
+  <div style="font-size:36px;font-weight:800;color:var(--green);margin-bottom:12px">Ship it. Integrate.</div>
+  <div style="font-size:17px;color:var(--muted);text-align:center;max-width:640px;margin-bottom:32px">End-to-end heartbeat loop confirmed live. The "org chart for AI agents" framing is unique and fills a real gap. Lowest-effort integration of any agent orchestration tool evaluated this quarter.</div>
+  <div style="display:flex;gap:20px;width:100%">
+    <div class="highlight-box green" style="text-align:left;flex:1">
+      <div class="hb-title">What works</div>
+      <p>Install in 1 command · Self-hosted · OpenClaw native · Heartbeat loop confirmed · Budget controls · Org chart + ticketing · Audit log</p>
+    </div>
+    <div class="highlight-box yellow" style="text-align:left;flex:1">
+      <div class="hb-title">Watch items</div>
+      <p>openclaw_gateway adapter schema gap (use process adapter for now) · Embedded PG needs non-root or Docker · LLM provider must be configured separately</p>
+    </div>
+  </div>
+</div>
+
+<!-- Slide 9: Recommendations -->
+<div class="slide slide-content" data-index="8">
+  <div class="slide-tag">Recommendation</div>
+  <div class="slide-title">Three Concrete Next Steps</div>
+  <div class="reco-grid">
+    <div class="reco-card">
+      <div class="reco-num">01</div>
+      <div class="reco-name">Internal Demo</div>
+      <div class="reco-why">Show the Paperclip UI to the AI Innovation team. Spin up a live instance with the monday.com use case: CEO agent decomposes a product goal, engineers (Claude Code) implement, Radar (OpenClaw) researches. 30-min live demo, high impact.</div>
+      <div style="font-size:12px;color:var(--accent);margin-top:4px">→ Effort: Low (instance already running)</div>
+    </div>
+    <div class="reco-card">
+      <div class="reco-num">02</div>
+      <div class="reco-name">Wire Bedrock LLM</div>
+      <div class="reco-why">The live POC used a process adapter bridge (no LLM). For real autonomous agent work, configure Paperclip's LLM provider (Bedrock/Anthropic) so the CEO agent can decompose goals and delegate tasks without manual intervention.</div>
+      <div style="font-size:12px;color:var(--accent);margin-top:4px">→ Effort: Low (paperclipai configure --section llm)</div>
+    </div>
+    <div class="reco-card">
+      <div class="reco-num">03</div>
+      <div class="reco-name">Submit openclaw_gateway Fix</div>
+      <div class="reco-why">The schema mismatch (paperclip field in agent params) between paperclipai 2026.416.0 and openclaw protocol is a 1-line schema fix. Worth filing upstream or patching locally to enable native WS adapter instead of the CLI bridge.</div>
+      <div style="font-size:12px;color:var(--yellow);margin-top:4px">→ Effort: Low — open issue or PR to openclaw repo</div>
+    </div>
+  </div>
+</div>
+
+<!-- Slide 10: Next Steps -->
+<div class="slide slide-content" data-index="9">
+  <div class="slide-tag">Next Steps</div>
+  <div class="slide-title">What Happens Now</div>
+  <ul class="next-list">
+    <li><div class="step-num">1</div><div><strong>Repo is live</strong> — github.com/monday-ai-club/paperclip-monday-poc · setup_and_run.sh reproduces the full POC in one command</div></li>
+    <li><div class="step-num">2</div><div><strong>Internal demo</strong> — book 30 min with AI Innovation team, spin up the live instance, show the heartbeat loop and org chart UI</div></li>
+    <li><div class="step-num">3</div><div><strong>Configure LLM provider</strong> — <code>npx paperclipai configure --section llm</code> to enable CEO autonomous goal decomposition</div></li>
+    <li><div class="step-num">4</div><div><strong>Explore Clipmart</strong> — coming soon: one-click import of full company templates (pre-built org structures + agent configs)</div></li>
+    <li><div class="step-num">5</div><div><strong>Watch for native openclaw adapter</strong> — once the paperclip field schema lands in openclaw, swap process bridge for WS adapter</div></li>
+  </ul>
+  <div class="highlight-box purple" style="margin-top:20px">
+    <div class="hb-title">Deck + code</div>
+    <p>github.com/monday-ai-club/paperclip-monday-poc · Rendered deck: raw.githack.com/monday-ai-club/paperclip-monday-poc/main/deck/index.html</p>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<div id="nav">
+  <button class="nav-btn" id="btn-prev" onclick="go(-1)" disabled>←</button>
+  <span id="slide-counter">1 / 10</span>
+  <button class="nav-btn" id="btn-next" onclick="go(1)">→</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+  function go(dir) {
+    const next = current + dir;
+    if (next < 0 || next >= total) return;
+    slides[current].classList.remove('active');
+    slides[current].classList.add(dir > 0 ? 'exit-left' : '');
+    setTimeout(() => slides[current].classList.remove('exit-left'), 450);
+    current = next;
+    slides[current].classList.add('active');
+    update();
+  }
+  function update() {
+    document.getElementById('slide-counter').textContent = (current + 1) + ' / ' + total;
+    document.getElementById('btn-prev').disabled = current === 0;
+    document.getElementById('btn-next').disabled = current === total - 1;
+    document.getElementById('progress-bar').style.width = (((current + 1) / total) * 100) + '%';
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go(1);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') go(-1);
+  });
+  update();
+</script>
+</body>
+</html>
